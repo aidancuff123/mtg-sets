@@ -70,16 +70,21 @@ function parse(text) {
 }
 
 const sleep = ms => new Promise(r => setTimeout(r, ms));
+// Scryfall limits /cards/search to 2 requests/second, so wait 550ms+ between calls.
+let extra = 0;
 async function get(url) {
-  for (let i = 0; i < 4; i++) {
-    await sleep(120);
-    const r = await fetch(url, { headers: { Accept: 'application/json' } });
-    if (r.status === 429) { await sleep(1500 * (i + 1)); continue; }
+  for (let i = 0; i < 5; i++) {
+    await sleep(550 + extra);
+    let r;
+    try { r = await fetch(url); }
+    catch (e) { extra = Math.min(extra + 500, 3000); await sleep(2000 * (i + 1)); continue; } // 429s often look like network errors in Safari
+    if (r.status === 429) { extra = Math.min(extra + 500, 3000); await sleep(2000 * (i + 1)); continue; }
+    extra = Math.max(0, extra - 100);
     if (r.status === 404) return null;
     if (!r.ok) throw new Error('HTTP ' + r.status);
     return r.json();
   }
-  throw new Error('Rate limited');
+  throw new Error('Scryfall kept refusing requests (rate limited) — wait a minute and tap the button again');
 }
 
 async function printingsFor(name) {

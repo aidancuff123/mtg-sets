@@ -1,0 +1,11 @@
+.next
+node_modules
+.cache
+reports
+data/saved-decklist.txt
+*.tsbuildinfo
+next-env.d.ts
+public/default-decklist.txt
+out
+.api-parked
+.manifest-parked.ts

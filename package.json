@@ -1,0 +1,31 @@
+{
+  "name": "mtg-overlap-analyzer",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev -H 0.0.0.0 -p 3000",
+    "build": "next build",
+    "start": "next start -H 0.0.0.0 -p 3000",
+    "test": "vitest run",
+    "test:live": "SCRYFALL_LIVE=1 vitest run tests/live",
+    "test:e2e": "node tests/e2e/run-e2e.mjs",
+    "analyze:live": "tsx scripts/analyze-live.ts",
+    "typecheck": "tsc --noEmit",
+    "build:static": "node scripts/build-static.mjs"
+  },
+  "dependencies": {
+    "next": "^15.5.29",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1",
+    "server-only": "^0.0.1"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.6",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "playwright-core": "^1.65.0",
+    "tsx": "^4.23.15",
+    "typescript": "^5.9.3",
+    "vitest": "^5.1.0"
+  }
+}

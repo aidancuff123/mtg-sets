@@ -7,7 +7,7 @@ import { buildCardViews, buildSetGroups, summarize, workingSet, cap, type Select
 import { buildContext, fullPrintingsCsv, groupedByCardCsv, groupedBySetCsv, htmlReport, textReport } from '@/lib/exports';
 import { idbGet, idbSet, lsGet, lsSet } from '@/lib/idb';
 import { loadCard, loadSets as fetchSetList, loadDefaultDeck, loadSavedDeck, saveDeck } from '@/lib/dataSource';
-import { SetsView, CardsView, CompareView, PricesView } from './views';
+import { SetsView, CardsView, CompareView, PricesView, type CrossOff } from './views';
 import { DeckEditor } from './DeckEditor';
 import type { PriceDisplay } from './ui';
 
@@ -36,6 +36,8 @@ export default function App() {
   const [selections, setSelections] = useState<Record<string, Selection>>({});
   const [saveStatus, setSaveStatus] = useState('');
   const [online, setOnline] = useState(true);
+  const [done, setDone] = useState<Record<string, boolean>>({});
+  const [hideDone, setHideDone] = useState(false);
   const runId = useRef(0);
 
   const parsed = useMemo(() => (deckText == null ? null : parseDecklist(deckText)), [deckText]);
@@ -47,6 +49,8 @@ export default function App() {
       setShowImages(lsGet('showImages', true));
       setDisplay(lsGet('priceDisplay', 'both'));
       setSelections(lsGet('selections', {}));
+      setDone(lsGet('crossedOff', {}));
+      setHideDone(lsGet('hideCrossedOff', false));
       const cached = await idbGet<Record<string, CardResult>>('results');
       if (cached) setResults(cached);
       const cachedSets = await idbGet<Record<string, SetInfo>>('sets');
@@ -74,6 +78,13 @@ export default function App() {
   useEffect(() => lsSet('showImages', showImages), [showImages]);
   useEffect(() => lsSet('priceDisplay', display), [display]);
   useEffect(() => lsSet('selections', selections), [selections]);
+  useEffect(() => lsSet('crossedOff', done), [done]);
+  useEffect(() => lsSet('hideCrossedOff', hideDone), [hideDone]);
+  const x: CrossOff = useMemo(() => ({
+    done, hideDone,
+    toggle: (k: string) => setDone((cur) => { const n = { ...cur }; if (n[k]) delete n[k]; else n[k] = true; return n; }),
+  }), [done, hideDone]);
+  const doneCount = entries.filter((e) => done[e.key]).length;
 
   const loadSets = useCallback(async (refresh = false) => {
     try {
@@ -195,6 +206,13 @@ export default function App() {
           value={filters.cardQuery}
           onChange={(e) => setFilters({ ...filters, cardQuery: e.target.value })}
         />
+        {(tab === 'sets' || tab === 'cards') && (
+          <div className="crossbar">
+            <span><b>{doneCount}</b>/{entries.length} crossed off</span>
+            <label><input type="checkbox" checked={hideDone} onChange={(e) => setHideDone(e.target.checked)} /> Hide crossed off</label>
+            {doneCount > 0 && <button className="linkbtn" onClick={() => { if (window.confirm('Clear all cross-offs?')) setDone({}); }}>Clear</button>}
+          </div>
+        )}
         {progress && (
           <div className="progress" role="progressbar" aria-valuenow={progress.done} aria-valuemax={progress.total}>
             <div className="bar" style={{ width: `${(progress.done / Math.max(1, progress.total)) * 100}%` }} />
@@ -220,8 +238,8 @@ export default function App() {
             {summary.errored.length > 0 && <button className="btn small" onClick={() => build(false)}>Retry failed</button>}
           </details>
         )}
-        {tab === 'sets' && <SetsView groups={groups} display={display} showImages={showImages} priceMode={filters.priceMode} />}
-        {tab === 'cards' && <CardsView views={views} display={display} showImages={showImages} onCompare={(k) => { setCompareKey(k); setTab('compare'); }} />}
+        {tab === 'sets' && <SetsView groups={groups} display={display} showImages={showImages} priceMode={filters.priceMode} x={x} />}
+        {tab === 'cards' && <CardsView views={views} display={display} showImages={showImages} x={x} onCompare={(k) => { setCompareKey(k); setTab('compare'); }} />}
         {tab === 'compare' && (
           <CompareView
             cards={cards}

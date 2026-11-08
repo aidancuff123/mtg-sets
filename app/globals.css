@@ -171,3 +171,17 @@ code { background: var(--bg2); padding: 1px 5px; border-radius: 5px; }
 .seg { display: flex; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
 .seg button { flex: 1; padding: 9px; background: var(--card); border: 0; cursor: pointer; color: var(--fg); }
 .seg button.on { background: var(--acc); color: #111; font-weight: 600; }
+
+/* cross-off checklist */
+.check { flex: none; width: 34px; height: 34px; border-radius: 50%; border: 2px solid var(--line); background: var(--bg2); color: #111; font-weight: 800; font-size: 17px; cursor: pointer; display: grid; place-items: center; align-self: center; }
+.check.on { background: var(--ok); border-color: var(--ok); }
+.gname { background: none; border: 0; padding: 0; text-align: left; cursor: pointer; font-weight: 600; margin-bottom: 4px; display: block; }
+.crossed .nm, .crossed .gtitle b { text-decoration: line-through; text-decoration-thickness: 2px; color: var(--mut); }
+.crossed .thumb, .crossed .pline, .crossed .linkbtn { opacity: 0.45; }
+.headrow { display: flex; align-items: center; padding-left: 10px; }
+.headrow .ghead { padding-left: 10px; }
+.crossbar { display: flex; align-items: center; gap: 12px; margin-top: 8px; font-size: 13px; color: var(--mut); }
+.crossbar b { color: var(--ok); }
+.crossbar label { display: flex; align-items: center; gap: 6px; }
+.crossbar input { width: 18px; height: 18px; accent-color: var(--ok); }
+.crossbar .linkbtn { margin-left: auto; }

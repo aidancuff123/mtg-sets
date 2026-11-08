@@ -8,10 +8,20 @@ import {
 import { Chevron, PrintingLine, Prices, Rarity, ScryLink, SetIcon, Thumb, type PriceDisplay } from './ui';
 
 type InSetSort = 'name' | 'price' | 'rarity';
+export interface CrossOff { done: Record<string, boolean>; toggle: (key: string) => void; hideDone: boolean }
+
+function CheckBtn({ k, name, x }: { k: string; name: string; x: CrossOff }) {
+  const on = !!x.done[k];
+  return (
+    <button className={`check ${on ? 'on' : ''}`} onClick={(e) => { e.stopPropagation(); x.toggle(k); }} aria-pressed={on} aria-label={`${on ? 'Uncross' : 'Cross off'} ${name}`}>
+      {on ? '✓' : ''}
+    </button>
+  );
+}
 
 /* ───────────── View A: sets ranked by overlap ───────────── */
-export function SetsView({ groups, display, showImages, priceMode }: {
-  groups: SetGroup[]; display: PriceDisplay; showImages: boolean; priceMode: 'nonfoil' | 'foil';
+export function SetsView({ groups, display, showImages, priceMode, x }: {
+  groups: SetGroup[]; display: PriceDisplay; showImages: boolean; priceMode: 'nonfoil' | 'foil'; x: CrossOff;
 }) {
   const [open, setOpen] = useState<Record<string, boolean>>({});
   const [limit, setLimit] = useState(40);
@@ -29,6 +39,8 @@ export function SetsView({ groups, display, showImages, priceMode }: {
       </div>
       {groups.slice(0, limit).map((g, i) => {
         const isOpen = !!open[g.setCode];
+        const left = g.cards.filter((c) => !x.done[c.entry.key]).length;
+        if (x.hideDone && left === 0) return null;
         return (
           <section key={g.setCode} className="card group">
             <button className="ghead" onClick={() => setOpen({ ...open, [g.setCode]: !isOpen })} aria-expanded={isOpen}>
@@ -40,14 +52,14 @@ export function SetsView({ groups, display, showImages, priceMode }: {
               </span>
               <span className="score">
                 <b>{g.uniqueCount}</b>
-                <small>{g.percentOfDeck.toFixed(0)}% · {g.physicalQuantity} pcs</small>
+                <small>{left < g.uniqueCount ? `${left} left` : `${g.percentOfDeck.toFixed(0)}% · ${g.physicalQuantity} pcs`}</small>
               </span>
               <Chevron open={isOpen} />
             </button>
             {isOpen && (
               <div className="gbody">
-                {sortInSet(g.cards, inSort, priceMode).map((c) => (
-                  <GroupCard key={c.entry.key} entry={c.entry} printings={c.printings} display={display} showImages={showImages} />
+                {sortInSet(g.cards, inSort, priceMode).filter((c) => !(x.hideDone && x.done[c.entry.key])).map((c) => (
+                  <GroupCard key={c.entry.key} entry={c.entry} printings={c.printings} display={display} showImages={showImages} x={x} />
                 ))}
               </div>
             )}
@@ -70,16 +82,17 @@ function sortInSet(cards: SetGroup['cards'], s: InSetSort, mode: 'nonfoil' | 'fo
   return c;
 }
 
-function GroupCard({ entry, printings, display, showImages }: { entry: DeckEntry; printings: Printing[]; display: PriceDisplay; showImages: boolean }) {
+function GroupCard({ entry, printings, display, showImages, x }: { entry: DeckEntry; printings: Printing[]; display: PriceDisplay; showImages: boolean; x: CrossOff }) {
   const [open, setOpen] = useState(false);
   const p = printings[0];
   const multi = printings.length > 1;
   return (
-    <div className="gcard">
+    <div className={`gcard ${x.done[entry.key] ? 'crossed' : ''}`}>
       <div className="gcrow">
+        <CheckBtn k={entry.key} name={entry.name} x={x} />
         <Thumb p={p} show={showImages} />
         <div className="ginfo">
-          <div className="gname"><span className="qty">{entry.quantity}×</span> {entry.name}</div>
+          <button className="gname" onClick={() => x.toggle(entry.key)}><span className="qty">{entry.quantity}×</span> <span className="nm">{entry.name}</span></button>
           {multi ? (
             <button className="linkbtn" onClick={() => setOpen(!open)} aria-expanded={open}>
               {printings.length} printings in this set <Chevron open={open} />
@@ -104,8 +117,8 @@ function GroupCard({ entry, printings, display, showImages }: { entry: DeckEntry
 }
 
 /* ───────────── View B: all cards and their sets ───────────── */
-export function CardsView({ views, display, showImages, onCompare }: {
-  views: CardView[]; display: PriceDisplay; showImages: boolean; onCompare: (key: string) => void;
+export function CardsView({ views, display, showImages, onCompare, x }: {
+  views: CardView[]; display: PriceDisplay; showImages: boolean; onCompare: (key: string) => void; x: CrossOff;
 }) {
   const [sort, setSort] = useState<CardSort>('name');
   const [open, setOpen] = useState<Record<string, boolean>>({});
@@ -124,9 +137,12 @@ export function CardsView({ views, display, showImages, onCompare }: {
       </div>
       {sorted.map((v) => {
         const isOpen = !!open[v.entry.key];
+        if (x.hideDone && x.done[v.entry.key]) return null;
         const first = v.sets[0]?.printings[0];
         return (
-          <section key={v.entry.key} className="card group">
+          <section key={v.entry.key} className={`card group ${x.done[v.entry.key] ? 'crossed' : ''}`}>
+            <div className="headrow">
+            <CheckBtn k={v.entry.key} name={v.entry.name} x={x} />
             <button className="ghead" onClick={() => setOpen({ ...open, [v.entry.key]: !isOpen })} aria-expanded={isOpen}>
               <Thumb p={first} show={showImages} />
               <span className="gtitle">
@@ -140,6 +156,7 @@ export function CardsView({ views, display, showImages, onCompare }: {
               <span className="score"><b>{v.sets.length}</b><small>sets</small></span>
               <Chevron open={isOpen} />
             </button>
+            </div>
             {isOpen && (
               <div className="gbody">
                 <button className="btn small" onClick={() => onCompare(v.entry.key)}>Compare all printings</button>

@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<title>MTG Sets</title>
+<style>
+:root{color-scheme:dark;--bg:#0f1115;--card:#1a1e28;--line:#2a303d;--fg:#ece9e4;--mut:#969cab;--acc:#d4a72c}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.4 -apple-system,system-ui,sans-serif;-webkit-text-size-adjust:100%}
+main{max-width:760px;margin:0 auto;padding:14px 12px 60px}
+h1{font-size:20px;margin:4px 0 10px}
+textarea{width:100%;height:150px;background:#151821;color:var(--fg);border:1px solid var(--line);border-radius:12px;padding:10px;font:14px ui-monospace,Menlo,monospace}
+button,select{font:inherit;color:var(--fg);background:var(--card);border:1px solid var(--line);border-radius:10px;padding:10px 14px}
+.go{background:var(--acc);color:#111;border-color:var(--acc);font-weight:600}
+.row{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:10px 0}
+.mut{color:var(--mut);font-size:13px}
+details{background:var(--card);border:1px solid var(--line);border-radius:12px;margin:8px 0}
+summary{padding:12px;cursor:pointer;list-style:none;display:flex;gap:10px;align-items:center}
+summary::-webkit-details-marker{display:none}
+.n{color:var(--acc);font-weight:700;font-size:18px;min-width:28px;text-align:right}
+.t{flex:1;min-width:0}.t small{display:block;color:var(--mut)}
+.c{border-top:1px solid var(--line);padding:9px 12px}
+.c b{font-weight:600}.q{color:var(--acc)}
+.p{font-size:13px;color:var(--mut);margin-top:2px}.p span{margin-right:10px}
+a{color:var(--acc)}
+.r-common{color:#b4b9c4}.r-uncommon{color:#9cc3dc}.r-rare{color:#e2c05a}.r-mythic{color:#f0814a}
+.err{color:#e5625a}
+</style>
+</head>
+<body>
+<main>
+<h1>MTG Set Overlap</h1>
+<textarea id="list" placeholder="Paste your list, e.g.&#10;1 Sign in Blood (fdc)&#10;33 Swamp (mdd)"></textarea>
+<div class="row">
+  <button class="go" id="go">Get Scryfall data</button>
+  <span class="mut" id="status"></span>
+</div>
+<div class="row" id="controls" hidden>
+  <select id="view">
+    <option value="sets">Group by set</option>
+    <option value="cards">Group by card</option>
+  </select>
+  <select id="sort">
+    <option value="count">Most of my cards first</option>
+    <option value="name">Set name A–Z</option>
+    <option value="new">Newest set first</option>
+    <option value="old">Oldest set first</option>
+  </select>
+</div>
+<div id="out"></div>
+<p class="mut">English paper printings only. The List (PLST) excluded. Prices are Scryfall USD estimates; N/A = no price.</p>
+</main>
+<script>
+const $ = id => document.getElementById(id);
+let deck = [], data = {}; // data[name] = {printings:[], error}
+
+function parse(text) {
+  const map = new Map();
+  for (let line of text.split(/\r?\n/)) {
+    line = line.trim();
+    const m = line.match(/^(\d+)\s*x?\s+(.+)$/i);
+    if (!m) continue;
+    let name = m[2].replace(/\s*\*[A-Z]+\*\s*$/, '').replace(/\s+\([A-Za-z0-9]{2,8}\)(\s+\S+)?\s*$/, '')
+      .replace(/[‘’`´]/g, "'").replace(/\s+/g, ' ').trim();
+    const k = name.toLowerCase();
+    if (map.has(k)) map.get(k).qty += +m[1]; else map.set(k, { name, qty: +m[1] });
+  }
+  return [...map.values()];
+}
+
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+async function get(url) {
+  for (let i = 0; i < 4; i++) {
+    await sleep(120);
+    const r = await fetch(url, { headers: { Accept: 'application/json' } });
+    if (r.status === 429) { await sleep(1500 * (i + 1)); continue; }
+    if (r.status === 404) return null;
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    return r.json();
+  }
+  throw new Error('Rate limited');
+}
+
+async function printingsFor(name) {
+  const q = `!"${name.replace(/"/g, '\\"')}" lang:en game:paper -set:plst`;
+  let url = 'https://api.scryfall.com/cards/search?unique=prints&include_extras=true&include_variations=true&order=released&q=' + encodeURIComponent(q);
+  const out = new Map();
+  let first = true;
+  while (url) {
+    const page = await get(url);
+    if (!page) { if (first) return null; break; }
+    first = false;
+    for (const c of page.data) {
+      if (c.set === 'plst' || c.digital || c.lang !== 'en') continue;
+      out.set(c.id, {
+        set: c.set, setName: c.set_name, date: c.released_at, num: c.collector_number, rarity: c.rarity,
+        usd: c.prices.usd, foil: c.prices.usd_foil || c.prices.usd_etched, url: c.scryfall_uri
+      });
+    }
+    url = page.has_more ? page.next_page : null;
+  }
+  return [...out.values()];
+}
+
+$('go').onclick = async () => {
+  deck = parse($('list').value);
+  if (!deck.length) { $('status').textContent = 'No cards found — lines should look like "1 Card Name".'; return; }
+  try { localStorage.setItem('list', $('list').value); } catch {}
+  $('go').disabled = true; data = {};
+  const total = deck.reduce((s, c) => s + c.qty, 0);
+  for (let i = 0; i < deck.length; i++) {
+    const c = deck[i];
+    $('status').textContent = `Fetching ${i + 1}/${deck.length}: ${c.name}`;
+    try {
+      const p = await printingsFor(c.name);
+      data[c.name] = p ? { printings: p } : { printings: [], error: 'Not found on Scryfall' };
+    } catch (e) { data[c.name] = { printings: [], error: e.message }; }
+  }
+  const bad = deck.filter(c => data[c.name].error);
+  $('status').textContent = `${deck.length} cards (${total} total)` + (bad.length ? ` · ${bad.length} problem(s)` : ' · all found');
+  $('go').disabled = false; $('controls').hidden = false;
+  try { localStorage.setItem('data', JSON.stringify({ deck, data })); } catch {}
+  render();
+};
+
+const money = v => v == null ? 'N/A' : '$' + Number(v).toFixed(2);
+const esc = s => String(s).replace(/[&<>"]/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[ch]));
+const line = p => `<div class="p"><span>#${esc(p.num)}</span><span class="r-${p.rarity}">${p.rarity[0].toUpperCase() + p.rarity.slice(1)}</span><span>NF ${money(p.usd)}</span><span>Foil ${money(p.foil)}</span><a href="${esc(p.url)}" target="_blank">Scryfall</a></div>`;
+
+function render() {
+  const view = $('view').value, sort = $('sort').value;
+  $('sort').disabled = view === 'cards';
+  let html = '';
+  const bad = deck.filter(c => data[c.name]?.error);
+  if (bad.length) html += `<details open><summary><span class="t err">Problems (${bad.length})</span></summary>${bad.map(c => `<div class="c">${esc(c.name)} — <span class="err">${esc(data[c.name].error)}</span></div>`).join('')}</details>`;
+
+  if (view === 'sets') {
+    const sets = new Map();
+    for (const c of deck) for (const p of data[c.name]?.printings || []) {
+      let s = sets.get(p.set);
+      if (!s) sets.set(p.set, s = { code: p.set, name: p.setName, date: p.date, cards: new Map() });
+      if (!s.cards.has(c.name)) s.cards.set(c.name, { card: c, ps: [] });
+      s.cards.get(c.name).ps.push(p);
+    }
+    const list = [...sets.values()];
+    const by = {
+      count: (a, b) => b.cards.size - a.cards.size || a.name.localeCompare(b.name),
+      name: (a, b) => a.name.localeCompare(b.name),
+      new: (a, b) => b.date.localeCompare(a.date),
+      old: (a, b) => a.date.localeCompare(b.date),
+    }[sort];
+    list.sort(by);
+    html += list.map(s => {
+      const cards = [...s.cards.values()].sort((a, b) => a.card.name.localeCompare(b.card.name));
+      const pct = Math.round(s.cards.size / deck.length * 100);
+      return `<details><summary><span class="n">${s.cards.size}</span><span class="t">${esc(s.name)}<small>${s.code.toUpperCase()} · ${s.date.slice(0, 4)} · ${pct}% of your cards</small></span></summary>` +
+        cards.map(x => `<div class="c"><b><span class="q">${x.card.qty}×</span> ${esc(x.card.name)}</b>${x.ps.map(line).join('')}</div>`).join('') + '</details>';
+    }).join('');
+  } else {
+    html += [...deck].sort((a, b) => a.name.localeCompare(b.name)).map(c => {
+      const ps = data[c.name]?.printings || [];
+      const setCount = new Set(ps.map(p => p.set)).size;
+      return `<details><summary><span class="n">${setCount}</span><span class="t"><span class="q">${c.qty}×</span> ${esc(c.name)}<small>${ps.length} printings in ${setCount} sets</small></span></summary>` +
+        ps.map(p => `<div class="c"><b>${esc(p.setName)}</b> <span class="mut">${p.set.toUpperCase()}</span>${line(p)}</div>`).join('') + '</details>';
+    }).join('');
+  }
+  $('out').innerHTML = html;
+}
+$('view').onchange = render; $('sort').onchange = render;
+
+try {
+  $('list').value = localStorage.getItem('list') || '';
+  const saved = JSON.parse(localStorage.getItem('data') || 'null');
+  if (saved) { deck = saved.deck; data = saved.data; $('controls').hidden = false; $('status').textContent = 'Showing last results'; render(); }
+} catch {}
+</script>
+</body>
+</html>

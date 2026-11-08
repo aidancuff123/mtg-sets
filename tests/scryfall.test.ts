@@ -107,7 +107,7 @@ describe('rate limiting and retries', () => {
       fetchFn: (async () => (++n < 3 ? jsonResponse({}, 429, { 'retry-after': '2' }) : jsonResponse({ ok: 1 }))) as any,
     });
     expect(await c.getJson('https://api.scryfall.com/x')).toEqual({ ok: 1 });
-    expect(sleeps).toEqual([2000, 2000]);
+    expect(sleeps.filter((ms) => ms === 2000)).toHaveLength(2); // Retry-After honoured (other entries are pacing waits)
   });
 
   it('never retries indefinitely on persistent 429', async () => {
@@ -122,6 +122,25 @@ describe('rate limiting and retries', () => {
     const c = new ScryfallClient({ minIntervalMs: 110, fetchFn: (async () => { starts.push(Date.now()); return jsonResponse({}); }) as any });
     await Promise.all([1, 2, 3, 4].map(() => c.getJson('https://api.scryfall.com/x')));
     for (let i = 1; i < starts.length; i++) expect(starts[i] - starts[i - 1]).toBeGreaterThanOrEqual(100);
+  });
+
+  it('paces /cards/search and /cards/named at Scryfall\'s 2/s limit, other endpoints faster', () => {
+    const c = new ScryfallClient({ minIntervalMs: 120 });
+    expect(c.intervalFor('https://api.scryfall.com/cards/search?q=x')).toBeGreaterThanOrEqual(500);
+    expect(c.intervalFor('https://api.scryfall.com/cards/named?exact=x')).toBeGreaterThanOrEqual(500);
+    expect(c.intervalFor('https://api.scryfall.com/sets')).toBe(120);
+  });
+
+  it('slows the whole session down after a 429 or a CORS-less network failure', async () => {
+    let n = 0;
+    const c = new ScryfallClient({ minIntervalMs: 0, sleep: noSleep, fetchFn: (async () => {
+      n++;
+      if (n === 1) throw new TypeError('Load failed');
+      if (n === 2) return jsonResponse({}, 429);
+      return jsonResponse({ ok: 1 });
+    }) as any });
+    await c.getJson('https://api.scryfall.com/cards/search?q=x');
+    expect(c.intervalFor('https://api.scryfall.com/cards/search?q=x')).toBeGreaterThan(550);
   });
 
   it('surfaces non-retryable errors with Scryfall details', async () => {

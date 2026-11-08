@@ -10,7 +10,7 @@ const HEADERS = {
 
 export interface ClientOptions {
   fetchFn?: typeof fetch;
-  /** Minimum gap between request starts. Default 120ms (~8 req/s, below Scryfall's 10/s). */
+  /** Minimum gap between request starts. Default 120ms (~8 req/s); card search/named endpoints always get ≥550ms (Scryfall's 2/s limit). */
   minIntervalMs?: number;
   maxRetries?: number;
   sleep?: (ms: number) => Promise<void>;
@@ -50,9 +50,20 @@ export class ScryfallClient {
     this.headers = opts.headers ?? HEADERS;
   }
 
-  private schedule<T>(task: () => Promise<T>): Promise<T> {
+  /** Scryfall hard limits: /cards/search|named|random|collection = 2/s; everything else = 10/s. */
+  static SLOW_ENDPOINT = /\/cards\/(search|named|random|collection)\b/;
+  static SLOW_INTERVAL_MS = 550;
+  /** Extra spacing added after a 429 so the whole session slows down, decaying back on success. */
+  private penaltyMs = 0;
+
+  intervalFor(url: string): number {
+    const base = ScryfallClient.SLOW_ENDPOINT.test(url) ? Math.max(this.minIntervalMs, ScryfallClient.SLOW_INTERVAL_MS) : this.minIntervalMs;
+    return base + this.penaltyMs;
+  }
+
+  private schedule<T>(task: () => Promise<T>, interval = this.minIntervalMs): Promise<T> {
     const run = this.chain.then(async () => {
-      const wait = this.lastStart + this.minIntervalMs - Date.now();
+      const wait = this.lastStart + interval - Date.now();
       if (wait > 0) await this.sleep(wait);
       this.lastStart = Date.now();
       this.requestCount++;
@@ -68,21 +79,30 @@ export class ScryfallClient {
     for (;;) {
       let res: Response;
       try {
-        res = await this.schedule(() => this.fetchFn(url, { headers: this.headers, cache: 'no-store' }));
+        res = await this.schedule(() => this.fetchFn(url, { headers: this.headers, cache: 'no-store' }), this.intervalFor(url));
       } catch (err) {
-        if (attempt >= this.maxRetries) throw new ScryfallError(`Network error contacting Scryfall: ${(err as Error).message}`);
-        await this.sleep(Math.min(1000 * 2 ** attempt, this.maxBackoffMs));
+        // In browsers a 429 often arrives without CORS headers and surfaces as a network error, so back off as if rate-limited.
+        this.penaltyMs = Math.min(this.penaltyMs + 500, 3000);
+        if (attempt >= this.maxRetries) throw new ScryfallError(`Network error contacting Scryfall (possibly rate-limited): ${(err as Error).message}`);
+        await this.sleep(Math.min(2000 * 2 ** attempt, this.maxBackoffMs));
         attempt++;
         continue;
       }
-      if (res.status === 404) return null;
-      if (res.ok) return (await res.json()) as T;
+      if (res.status === 404) {
+        this.penaltyMs = Math.max(0, this.penaltyMs - 100);
+        return null;
+      }
+      if (res.ok) {
+        this.penaltyMs = Math.max(0, this.penaltyMs - 100);
+        return (await res.json()) as T;
+      }
+      if (res.status === 429) this.penaltyMs = Math.min(this.penaltyMs + 500, 3000);
       if (res.status === 429 || res.status >= 500) {
         if (attempt >= this.maxRetries) {
           throw new ScryfallError(`Scryfall returned HTTP ${res.status} after ${attempt + 1} attempts`, res.status);
         }
         const ra = Number(res.headers.get('retry-after'));
-        const backoff = Number.isFinite(ra) && ra > 0 ? ra * 1000 : 1000 * 2 ** attempt;
+        const backoff = Number.isFinite(ra) && ra > 0 ? ra * 1000 : 2000 * 2 ** attempt;
         await this.sleep(Math.min(backoff, this.maxBackoffMs));
         attempt++;
         continue;

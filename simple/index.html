@@ -24,6 +24,11 @@ summary::-webkit-details-marker{display:none}
 .c b{font-weight:600}.q{color:var(--acc)}
 .p{font-size:13px;color:var(--mut);margin-top:2px}.p span{margin-right:10px}
 a{color:var(--acc)}
+.ck{flex:none;width:30px;height:30px;border-radius:50%;border:2px solid var(--line);display:inline-grid;place-items:center;font-weight:800;color:#111;cursor:pointer}
+.done .ck{background:#3fb67a;border-color:#3fb67a}
+.done .nm{text-decoration:line-through;text-decoration-thickness:2px;color:var(--mut)}.done .p{opacity:.45}
+.crow{display:flex;gap:10px;align-items:flex-start}.crow>div{flex:1;min-width:0}
+.bar{display:flex;gap:12px;align-items:center;font-size:13px;color:var(--mut);margin:6px 0}.bar b{color:#3fb67a}
 .r-common{color:#b4b9c4}.r-uncommon{color:#9cc3dc}.r-rare{color:#e2c05a}.r-mythic{color:#f0814a}
 .err{color:#e5625a}
 </style>
@@ -48,12 +53,16 @@ a{color:var(--acc)}
     <option value="old">Oldest set first</option>
   </select>
 </div>
+<div class="bar" id="bar" hidden><span><b id="dc">0</b>/<span id="tc">0</span> crossed off</span><label><input type="checkbox" id="hide"> Hide crossed off</label><a href="#" id="clr">Clear</a></div>
 <div id="out"></div>
 <p class="mut">English paper printings only. The List (PLST) excluded. Prices are Scryfall USD estimates; N/A = no price.</p>
 </main>
 <script>
 const $ = id => document.getElementById(id);
 let deck = [], data = {}; // data[name] = {printings:[], error}
+let done = {};
+try { done = JSON.parse(localStorage.getItem('done') || '{}'); } catch {}
+const ck = name => `<span class="ck" data-k="${esc(name)}">${done[name] ? '✓' : ''}</span>`;
 
 function parse(text) {
   const map = new Map();
@@ -134,7 +143,8 @@ const esc = s => String(s).replace(/[&<>"]/g, ch => ({ '&': '&amp;', '<': '&lt;'
 const line = p => `<div class="p"><span>#${esc(p.num)}</span><span class="r-${p.rarity}">${p.rarity[0].toUpperCase() + p.rarity.slice(1)}</span><span>NF ${money(p.usd)}</span><span>Foil ${money(p.foil)}</span><a href="${esc(p.url)}" target="_blank">Scryfall</a></div>`;
 
 function render() {
-  const view = $('view').value, sort = $('sort').value;
+  const view = $('view').value, sort = $('sort').value, hide = $('hide').checked;
+  $('bar').hidden = false; $('tc').textContent = deck.length; $('dc').textContent = deck.filter(c => done[c.name]).length;
   $('sort').disabled = view === 'cards';
   let html = '';
   const bad = deck.filter(c => data[c.name]?.error);
@@ -159,20 +169,37 @@ function render() {
     html += list.map(s => {
       const cards = [...s.cards.values()].sort((a, b) => a.card.name.localeCompare(b.card.name));
       const pct = Math.round(s.cards.size / deck.length * 100);
-      return `<details><summary><span class="n">${s.cards.size}</span><span class="t">${esc(s.name)}<small>${s.code.toUpperCase()} · ${s.date.slice(0, 4)} · ${pct}% of your cards</small></span></summary>` +
-        cards.map(x => `<div class="c"><b><span class="q">${x.card.qty}×</span> ${esc(x.card.name)}</b>${x.ps.map(line).join('')}</div>`).join('') + '</details>';
+      const left = cards.filter(x => !done[x.card.name]).length;
+      if (hide && !left) return '';
+      return `<details data-id="s:${s.code}"><summary><span class="n">${s.cards.size}</span><span class="t">${esc(s.name)}<small>${s.code.toUpperCase()} · ${s.date.slice(0, 4)} · ${left < cards.length ? left + ' left' : pct + '% of your cards'}</small></span></summary>` +
+        cards.filter(x => !(hide && done[x.card.name])).map(x => `<div class="c ${done[x.card.name] ? 'done' : ''}"><div class="crow">${ck(x.card.name)}<div><b class="nm" data-k="${esc(x.card.name)}"><span class="q">${x.card.qty}×</span> ${esc(x.card.name)}</b>${x.ps.map(line).join('')}</div></div></div>`).join('') + '</details>';
     }).join('');
   } else {
     html += [...deck].sort((a, b) => a.name.localeCompare(b.name)).map(c => {
       const ps = data[c.name]?.printings || [];
       const setCount = new Set(ps.map(p => p.set)).size;
-      return `<details><summary><span class="n">${setCount}</span><span class="t"><span class="q">${c.qty}×</span> ${esc(c.name)}<small>${ps.length} printings in ${setCount} sets</small></span></summary>` +
+      if (hide && done[c.name]) return '';
+      return `<details data-id="c:${esc(c.name)}" class="${done[c.name] ? 'done' : ''}"><summary>${ck(c.name)}<span class="n">${setCount}</span><span class="t nm"><span class="q">${c.qty}×</span> ${esc(c.name)}<small>${ps.length} printings in ${setCount} sets</small></span></summary>` +
         ps.map(p => `<div class="c"><b>${esc(p.setName)}</b> <span class="mut">${p.set.toUpperCase()}</span>${line(p)}</div>`).join('') + '</details>';
     }).join('');
   }
+  const openIds = new Set([...document.querySelectorAll('#out details[open]')].map(d => d.dataset.id));
+  const y = window.scrollY;
   $('out').innerHTML = html;
+  document.querySelectorAll('#out details').forEach(d => { if (openIds.has(d.dataset.id)) d.open = true; });
+  window.scrollTo(0, y);
 }
-$('view').onchange = render; $('sort').onchange = render;
+$('view').onchange = render; $('sort').onchange = render; $('hide').onchange = render;
+$('out').addEventListener('click', e => {
+  const t = e.target.closest('[data-k]');
+  if (!t) return;
+  e.preventDefault(); // don't expand/collapse the section when ticking
+  const k = t.dataset.k;
+  if (done[k]) delete done[k]; else done[k] = true;
+  try { localStorage.setItem('done', JSON.stringify(done)); } catch {}
+  render();
+});
+$('clr').onclick = e => { e.preventDefault(); done = {}; try { localStorage.setItem('done', '{}'); } catch {} render(); };
 
 try {
   $('list').value = localStorage.getItem('list') || '';

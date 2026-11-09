@@ -21,7 +21,10 @@ const TABS: { id: Tab; label: string; icon: string }[] = [
 ];
 
 export default function App() {
-  const [deckText, setDeckText] = useState<string | null>(null);
+  const [decks, setDecks] = useState<Deck[] | null>(null);
+  const [activeId, setActiveId] = useState<string | null>(null);
+  const activeDeck = decks?.find((d) => d.id === activeId) ?? null;
+  const deckText = activeDeck?.text ?? null;
   const [results, setResults] = useState<Record<string, CardResult>>({});
   const resultsRef = useRef(results);
   resultsRef.current = results;
@@ -31,7 +34,7 @@ export default function App() {
   const [progress, setProgress] = useState<{ done: number; total: number; current?: string } | null>(null);
   const [showImages, setShowImages] = useState(true);
   const [display, setDisplay] = useState<PriceDisplay>('both');
-  const [sheet, setSheet] = useState<'filters' | 'export' | null>(null);
+  const [sheet, setSheet] = useState<'filters' | 'export' | 'decks' | null>(null);
   const [compareKey, setCompareKey] = useState<string | null>(null);
   const [selections, setSelections] = useState<Record<string, Selection>>({});
   const [saveStatus, setSaveStatus] = useState('');
@@ -48,22 +51,28 @@ export default function App() {
     (async () => {
       setShowImages(lsGet('showImages', true));
       setDisplay(lsGet('priceDisplay', 'both'));
-      setSelections(lsGet('selections', {}));
-      setDone(lsGet('crossedOff', {}));
       setHideDone(lsGet('hideCrossedOff', false));
       const cached = await idbGet<Record<string, CardResult>>('results');
       if (cached) setResults(cached);
       const cachedSets = await idbGet<Record<string, SetInfo>>('sets');
       if (cachedSets) setSets(cachedSets);
-      let text = lsGet<string | null>('deckText', null);
-      if (text == null) {
-        try {
-          text = await loadSavedDeck();
-        } catch {
-          text = '';
+      let list = lsGet<Deck[] | null>('decks', null);
+      if (!list?.length) {
+        // first run, or upgrading from the single-deck version: keep the existing list and cross-offs
+        let text = lsGet<string | null>('deckText', null);
+        if (text == null) {
+          try { text = await loadSavedDeck(); } catch { text = ''; }
         }
+        const id = newId();
+        list = [{ id, name: 'My deck', text }];
+        lsSet(`crossedOff:${id}`, lsGet('crossedOff', {}));
+        lsSet(`selections:${id}`, lsGet('selections', {}));
+        lsSet('decks', list);
       }
-      setDeckText(text);
+      const want = lsGet<string | null>('activeDeck', null);
+      const id = list.some((d) => d.id === want) ? want! : list[0].id;
+      setDecks(list);
+      openDeck(id);
     })();
     const on = () => setOnline(navigator.onLine);
     on();
@@ -77,8 +86,10 @@ export default function App() {
 
   useEffect(() => lsSet('showImages', showImages), [showImages]);
   useEffect(() => lsSet('priceDisplay', display), [display]);
-  useEffect(() => lsSet('selections', selections), [selections]);
-  useEffect(() => lsSet('crossedOff', done), [done]);
+  // per-deck state is saved under the deck's id
+  useEffect(() => { if (activeId) lsSet(`selections:${activeId}`, selections); }, [selections, activeId]);
+  useEffect(() => { if (activeId) lsSet(`crossedOff:${activeId}`, done); }, [done, activeId]);
+  useEffect(() => { if (decks) lsSet('decks', decks); }, [decks]);
   useEffect(() => lsSet('hideCrossedOff', hideDone), [hideDone]);
   const x: CrossOff = useMemo(() => ({
     done, hideDone,
@@ -172,10 +183,32 @@ export default function App() {
   const ctx = () => buildContext(entries, results, filters, sets);
   const stamp = () => new Date().toISOString().slice(0, 16).replace(/[:T]/g, '-');
 
+  function openDeck(id: string) {
+    // load this deck's own cross-offs and printing choices in the same render as the switch
+    setDone(lsGet(`crossedOff:${id}`, {}));
+    setSelections(lsGet(`selections:${id}`, {}));
+    setActiveId(id);
+    lsSet('activeDeck', id);
+  }
+  const updateActiveText = (t: string) => setDecks((ds) => ds!.map((d) => (d.id === activeId ? { ...d, text: t } : d)));
   const applyDeck = (t: string) => {
-    lsSet('deckText', t);
-    setDeckText(t);
+    updateActiveText(t);
     setTab('sets');
+  };
+  const createDeck = (name: string, text: string) => {
+    const id = newId();
+    setDecks((ds) => [...(ds ?? []), { id, name: name.trim() || `Deck ${(ds?.length ?? 0) + 1}`, text }]);
+    openDeck(id);
+    setSheet(null);
+    setTab('sets');
+  };
+  const renameDeck = (id: string, name: string) => setDecks((ds) => ds!.map((d) => (d.id === id ? { ...d, name } : d)));
+  const deleteDeck = (id: string) => {
+    if (!decks || decks.length < 2) return;
+    const rest = decks.filter((d) => d.id !== id);
+    setDecks(rest);
+    try { localStorage.removeItem(`crossedOff:${id}`); localStorage.removeItem(`selections:${id}`); } catch {}
+    if (id === activeId) openDeck(rest[0].id);
   };
 
   const dataTime = useMemo(() => {
@@ -183,16 +216,16 @@ export default function App() {
     return ts.length ? new Date(ts[ts.length - 1]).toLocaleString() : null;
   }, [results]);
 
-  if (!parsed) return <div className="splash">Loading…</div>;
+  if (!parsed || !decks) return <div className="splash">Loading…</div>;
 
   return (
     <div className="app">
       <header className="top">
         <div className="toprow">
-          <div className="brand">
-            <b>Set Overlap</b>
+          <button className="brand" onClick={() => setSheet('decks')} aria-label="Switch deck">
+            <b>{activeDeck?.name ?? 'Deck'} <span className="caret">▾</span></b>
             <small>{entries.length} entries · {parsed.totalQuantity} cards{dataTime ? ` · prices ${dataTime}` : ''}</small>
-          </div>
+          </button>
           <button className="iconbtn" onClick={() => setSheet('filters')} aria-label="Filters">
             ⚲{activeFilterCount > 0 && <span className="dot">{activeFilterCount}</span>}
           </button>
@@ -253,12 +286,12 @@ export default function App() {
         {tab === 'prices' && <PricesView summary={summary} cards={cards} results={results} selections={selections} onCompare={(k) => { setCompareKey(k); setTab('compare'); }} />}
         {tab === 'deck' && (
           <DeckEditor
-            key={deckText}
+            key={`${activeId}:${deckText}`}
             text={deckText ?? ''}
             onApply={applyDeck}
             saveStatus={saveStatus}
             onSave={async (t) => {
-              lsSet('deckText', t);
+              updateActiveText(t);
               setSaveStatus(await saveDeck(t));
             }}
             onReset={async () => {
@@ -278,6 +311,18 @@ export default function App() {
       </nav>
 
       {sheet && <div className="scrim" onClick={() => setSheet(null)} />}
+      {sheet === 'decks' && (
+        <DecksSheet
+          decks={decks}
+          activeId={activeId}
+          onOpen={(id) => { openDeck(id); setSheet(null); }}
+          onCreate={createDeck}
+          onRename={renameDeck}
+          onDelete={deleteDeck}
+          onClose={() => setSheet(null)}
+          loadDefault={loadDefaultDeck}
+        />
+      )}
       {sheet === 'filters' && (
         <div className="sheet" role="dialog" aria-label="Filters">
           <div className="sheethead"><b>Filters</b><button className="btn small" onClick={() => setSheet(null)}>Done</button></div>
@@ -333,6 +378,72 @@ export default function App() {
           <button className="btn wide" onClick={() => download(`mtg-grouped-by-card-${stamp()}.csv`, groupedByCardCsv(ctx()), 'text/csv')}>Grouped-by-card CSV</button>
         </div>
       )}
+    </div>
+  );
+}
+
+interface Deck { id: string; name: string; text: string }
+function newId() {
+  return `d${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
+}
+
+function DecksSheet({ decks, activeId, onOpen, onCreate, onRename, onDelete, onClose, loadDefault }: {
+  decks: Deck[]; activeId: string | null; onOpen: (id: string) => void; onCreate: (name: string, text: string) => void;
+  onRename: (id: string, name: string) => void; onDelete: (id: string) => void; onClose: () => void; loadDefault: () => Promise<string>;
+}) {
+  const [name, setName] = useState('');
+  const [text, setText] = useState('');
+  const [editing, setEditing] = useState<string | null>(null);
+  const [draftName, setDraftName] = useState('');
+  const fileRef = useRef<HTMLInputElement>(null);
+  const preview = useMemo(() => parseDecklist(text), [text]);
+  return (
+    <div className="sheet" role="dialog" aria-label="Decks">
+      <div className="sheethead"><b>Decks</b><button className="btn small" onClick={onClose}>Done</button></div>
+      <div className="card decklist">
+        {decks.map((d) => {
+          const p = parseDecklist(d.text);
+          const crossed = Object.keys(lsGet<Record<string, boolean>>(`crossedOff:${d.id}`, {})).length;
+          return (
+            <div key={d.id} className={`deckitem ${d.id === activeId ? 'on' : ''}`}>
+              {editing === d.id ? (
+                <form className="row gap grow" onSubmit={(e) => { e.preventDefault(); if (draftName.trim()) onRename(d.id, draftName.trim()); setEditing(null); }}>
+                  <input className="grow" autoFocus value={draftName} onChange={(e) => setDraftName(e.target.value)} aria-label="Deck name" />
+                  <button className="btn small" type="submit">Save</button>
+                </form>
+              ) : (
+                <button className="deckopen" onClick={() => onOpen(d.id)}>
+                  <b>{d.id === activeId ? '● ' : ''}{d.name}</b>
+                  <small>{p.entries.length} entries · {p.totalQuantity} cards{crossed ? ` · ${crossed} crossed off` : ''}</small>
+                </button>
+              )}
+              {editing !== d.id && (
+                <>
+                  <button className="iconbtn" aria-label={`Rename ${d.name}`} onClick={() => { setEditing(d.id); setDraftName(d.name); }}>✎</button>
+                  <button className="iconbtn" aria-label={`Delete ${d.name}`} disabled={decks.length < 2}
+                    onClick={() => { if (window.confirm(`Delete "${d.name}" and its cross-offs?`)) onDelete(d.id); }}>✕</button>
+                </>
+              )}
+            </div>
+          );
+        })}
+      </div>
+      <h3 className="sheeth">New deck</h3>
+      <input className="wide" placeholder="Deck name" value={name} onChange={(e) => setName(e.target.value)} aria-label="New deck name" />
+      <textarea rows={7} placeholder={'Paste a list, e.g.\n1 Sign in Blood (fdc)\n33 Swamp'} value={text} onChange={(e) => setText(e.target.value)}
+        spellCheck={false} autoCapitalize="off" autoCorrect="off" aria-label="New deck list" />
+      <p className="muted small">{preview.entries.length} entries · {preview.totalQuantity} cards</p>
+      <div className="row gap wrap">
+        <button className="btn primary" disabled={!preview.entries.length} onClick={() => onCreate(name, text)}>Create deck</button>
+        <button className="btn" onClick={() => fileRef.current?.click()}>Import file</button>
+        <button className="btn" onClick={async () => { setText(await loadDefault()); if (!name) setName('Original list'); }}>Use original list</button>
+        <input ref={fileRef} type="file" accept=".txt,.dec,.csv,text/plain" hidden onChange={async (e) => {
+          const f = e.target.files?.[0];
+          if (f) { setText(await f.text()); if (!name) setName(f.name.replace(/\.[^.]+$/, '')); }
+          e.target.value = '';
+        }} />
+      </div>
+      <p className="muted small">Card data is shared between decks, so cards you've already loaded show up instantly in a new deck.</p>
     </div>
   );
 }

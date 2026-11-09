@@ -25,7 +25,9 @@ small { font-size: 12px; }
 .top { position: sticky; top: 0; z-index: 20; background: rgba(15, 17, 21, 0.92); backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
   padding: calc(env(safe-area-inset-top) + 8px) 14px 8px; border-bottom: 1px solid var(--line); }
 .toprow { display: flex; align-items: center; gap: 6px; }
-.brand { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.brand { flex: 1; min-width: 0; display: flex; flex-direction: column; background: none; border: 0; padding: 0; text-align: left; cursor: pointer; }
+.brand b { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.caret { color: var(--acc); font-size: 14px; }
 .brand b { font-size: 19px; letter-spacing: -0.2px; }
 .brand small { color: var(--mut); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .iconbtn { position: relative; width: 40px; height: 40px; border-radius: 12px; border: 1px solid var(--line); background: var(--card); font-size: 18px; display: grid; place-items: center; flex: none; cursor: pointer; }
@@ -185,3 +187,15 @@ code { background: var(--bg2); padding: 1px 5px; border-radius: 5px; }
 .crossbar label { display: flex; align-items: center; gap: 6px; }
 .crossbar input { width: 18px; height: 18px; accent-color: var(--ok); }
 .crossbar .linkbtn { margin-left: auto; }
+
+/* decks sheet */
+.decklist { margin: 4px 0 8px; }
+.deckitem { display: flex; align-items: center; gap: 8px; padding: 8px 10px; border-bottom: 1px solid var(--line); }
+.deckitem:last-child { border-bottom: 0; }
+.deckitem.on { background: rgba(212, 167, 44, 0.08); }
+.deckitem .iconbtn { width: 36px; height: 36px; font-size: 15px; }
+.deckopen { flex: 1; min-width: 0; background: none; border: 0; text-align: left; padding: 6px 0; cursor: pointer; display: flex; flex-direction: column; }
+.deckopen b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.deckopen small { color: var(--mut); }
+.sheeth { font-size: 15px; margin: 16px 0 8px; }
+.sheet input.wide { width: 100%; margin-bottom: 8px; color: var(--fg); }
